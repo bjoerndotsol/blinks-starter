@@ -14,30 +14,14 @@ import {
   VersionedTransaction,
 } from "@solana/web3.js";
 
-type TransferInstructionParams = {
-  receiver: PublicKey;
-  amount: number;
-  payer: PublicKey;
-};
-
-/**
- * Create standardized headers for Solana Actions API endpoints
- * These headers handle:
- * - CORS (Cross-Origin Resource Sharing) to allow requests from Blink clients
- * - Content-Type settings for JSON responses
- * - Security headers like CORS preflight requests
- * - API versioning headers if configured
- */
+// Create standardized headers for Blink Providers
 const headers = createActionHeaders();
 
+// Create a connection to the Solana Devnet
 const connection = new Connection("https://api.devnet.solana.com", "confirmed");
 
-/**
- * GET endpoint defines the Action metadata that describes:
- * - How the Action appears in Blink clients
- * - What parameters users need to provide
- * - How the Action should be executed
- */
+// GET endpoint defines the Blink metadata which is used
+// to display the Blink in Blink clients
 export const GET = async (req: Request) => {
   const response: ActionGetResponse = {
     // Identifies this as a Blink
@@ -95,28 +79,26 @@ export const GET = async (req: Request) => {
   });
 };
 
-/**
- * OPTIONS endpoint is required for CORS preflight requests
- * Browsers send these requests before actual API calls to check:
- * - If the server allows requests from the client's origin
- * - Which HTTP methods are allowed (GET, POST, etc.)
- * - Which headers can be included in the actual request
- */
+// OPTIONS endpoint is required for CORS requests
 export const OPTIONS = async () => {
   return new Response(null, { headers });
 };
 
-/**
- * POST endpoint handles the actual transaction creation
- * This endpoint:
- * - Validates the transfer parameters from the request
- * - Creates a Solana transaction for SOL transfer
- * - Returns the serialized transaction for signing
- */
+// POST endpoint handles the actual transaction creation
 export const POST = async (req: Request) => {
   try {
-    const { receiver, amount, payer } = await verifyTransferInstruction(req);
+    // Extract parameters from the URL
+    const url = new URL(req.url);
+    // Receiver public key is passed in the URL
+    const receiver = new PublicKey(url.searchParams.get("receiver")!);
+    // Amount of SOL to transfer is passed in the URL
+    const amount = Number(url.searchParams.get("amount"));
 
+    // Payer public key is passed in the request body
+    const request: ActionPostRequest = await req.json();
+    const payer = new PublicKey(request.account);
+
+    // Prepare the transaction
     const transaction = await prepareTransaction(
       connection,
       payer,
@@ -124,13 +106,16 @@ export const POST = async (req: Request) => {
       amount
     );
 
+    // Create a response with the serialized transaction
     const response: ActionPostResponse = {
       type: "transaction",
       transaction: Buffer.from(transaction.serialize()).toString("base64"),
     };
 
+    // Return the response with proper headers
     return Response.json(response, { status: 200, headers });
   } catch (error) {
+    // Log and return an error response
     console.error("Error processing request:", error);
     return new Response(JSON.stringify({ error: "Internal server error" }), {
       status: 500,
@@ -139,75 +124,30 @@ export const POST = async (req: Request) => {
   }
 };
 
-/**
- * Prepares a Solana transaction for transferring SOL between accounts
- * @param connection - The Solana network connection
- * @param payer - Public key of the account sending SOL
- * @param receiver - Public key of the account receiving SOL
- * @param amount - Amount of SOL to transfer
- * @returns A VersionedTransaction ready to be signed and sent
- */
+// Prepares a Solana transaction for transferring SOL between accounts
 const prepareTransaction = async (
   connection: Connection,
   payer: PublicKey,
   receiver: PublicKey,
   amount: number
 ) => {
+  // Create a transfer instruction
   const instruction = SystemProgram.transfer({
     fromPubkey: payer,
     toPubkey: new PublicKey(receiver),
     lamports: amount * LAMPORTS_PER_SOL,
   });
 
+  // Get the latest blockhash
   const { blockhash } = await connection.getLatestBlockhash();
 
+  // Create a transaction message
   const message = new TransactionMessage({
     payerKey: payer,
     recentBlockhash: blockhash,
     instructions: [instruction],
   }).compileToV0Message();
 
+  // Create and return a versioned transaction
   return new VersionedTransaction(message);
-};
-
-/**
- * Validates and extracts transfer instruction parameters from the request
- * @param req - The incoming HTTP request
- * @returns Promise resolving to validated transfer parameters
- * @throws Error if required parameters are missing or invalid
- */
-const verifyTransferInstruction = async (
-  req: Request
-): Promise<TransferInstructionParams> => {
-  return new Promise(async (resolve, reject) => {
-    try {
-      const url = new URL(req.url);
-      const request: ActionPostRequest = await req.json();
-
-      const receiverString = url.searchParams.get("receiver");
-      if (!receiverString) {
-        throw new Error("Receiver address is required");
-      }
-
-      const amountString = url.searchParams.get("amount");
-      if (!amountString) {
-        throw new Error("Amount is required");
-      }
-
-      if (!request.account) {
-        throw new Error("Payer account is required");
-      }
-
-      const result = {
-        receiver: new PublicKey(receiverString),
-        amount: Number(amountString),
-        payer: new PublicKey(request.account),
-      };
-
-      resolve(result);
-    } catch (error: unknown) {
-      console.error(error);
-      reject(`Invalid transfer instruction: ${(error as Error).message}`);
-    }
-  });
 };
