@@ -23,6 +23,7 @@ const connection = new Connection("https://api.devnet.solana.com", "confirmed");
 // GET endpoint defines the Blink metadata which is used
 // to display the Blink in Blink clients
 export const GET = async (req: Request) => {
+  // Create a response with the Blink metadata
   const response: ActionGetResponse = {
     // Identifies this as a Blink
     type: "action",
