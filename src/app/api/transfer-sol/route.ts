@@ -14,6 +14,12 @@ import {
   VersionedTransaction,
 } from "@solana/web3.js";
 
+type TransferInstructionParams = {
+  receiver: PublicKey;
+  amount: number;
+  payer: PublicKey;
+};
+
 /**
  * Create standardized headers for Solana Actions API endpoints
  * These headers handle:
@@ -100,23 +106,16 @@ export const OPTIONS = async () => {
   return new Response(null, { headers });
 };
 
+/**
+ * POST endpoint handles the actual transaction creation
+ * This endpoint:
+ * - Validates the transfer parameters from the request
+ * - Creates a Solana transaction for SOL transfer
+ * - Returns the serialized transaction for signing
+ */
 export const POST = async (req: Request) => {
   try {
-    const url = new URL(req.url);
-    const receiverString = url.searchParams.get("receiver");
-    const receiver = new PublicKey(receiverString!);
-    const amount: number = Number(url.searchParams.get("amount"));
-
-    const request: ActionPostRequest = await req.json();
-    const payer: PublicKey = new PublicKey(request.account);
-
-    // print the params
-    console.log(":: RECEIVED PARAMETERS ::");
-    console.log({ receiver, amount, payer });
-
-    if (!receiver || !amount) {
-      return new Response(null, { status: 400, headers });
-    }
+    const { receiver, amount, payer } = await verifyTransferInstruction(req);
 
     const transaction = await prepareTransaction(
       connection,
@@ -140,6 +139,14 @@ export const POST = async (req: Request) => {
   }
 };
 
+/**
+ * Prepares a Solana transaction for transferring SOL between accounts
+ * @param connection - The Solana network connection
+ * @param payer - Public key of the account sending SOL
+ * @param receiver - Public key of the account receiving SOL
+ * @param amount - Amount of SOL to transfer
+ * @returns A VersionedTransaction ready to be signed and sent
+ */
 const prepareTransaction = async (
   connection: Connection,
   payer: PublicKey,
@@ -161,4 +168,46 @@ const prepareTransaction = async (
   }).compileToV0Message();
 
   return new VersionedTransaction(message);
+};
+
+/**
+ * Validates and extracts transfer instruction parameters from the request
+ * @param req - The incoming HTTP request
+ * @returns Promise resolving to validated transfer parameters
+ * @throws Error if required parameters are missing or invalid
+ */
+const verifyTransferInstruction = async (
+  req: Request
+): Promise<TransferInstructionParams> => {
+  return new Promise(async (resolve, reject) => {
+    try {
+      const url = new URL(req.url);
+      const request: ActionPostRequest = await req.json();
+
+      const receiverString = url.searchParams.get("receiver");
+      if (!receiverString) {
+        throw new Error("Receiver address is required");
+      }
+
+      const amountString = url.searchParams.get("amount");
+      if (!amountString) {
+        throw new Error("Amount is required");
+      }
+
+      if (!request.account) {
+        throw new Error("Payer account is required");
+      }
+
+      const result = {
+        receiver: new PublicKey(receiverString),
+        amount: Number(amountString),
+        payer: new PublicKey(request.account),
+      };
+
+      resolve(result);
+    } catch (error: unknown) {
+      console.error(error);
+      reject(`Invalid transfer instruction: ${(error as Error).message}`);
+    }
+  });
 };
